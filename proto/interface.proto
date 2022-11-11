@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+option go_package = "github.com/LocatedInSpace/Distributed-Mutual-Exclusion/proto";
+
+package proto;
+
+// compile command:
+//protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative ./proto/interface.proto
+
+
+service RicartAndAgrawala
+{
+    rpc Request(Info) returns (Empty);
+    rpc Reply(Empty) returns (Empty);
+}
+
+message Info {
+    int32 id = 1;
+    int32 lamport = 2;
+}
+
+message Empty {
+    
+}
+
