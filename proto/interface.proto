@@ -11,12 +11,16 @@ package proto;
 service RicartAndAgrawala
 {
     rpc Request(Info) returns (Empty);
-    rpc Reply(Empty) returns (Empty);
+    rpc Reply(Id) returns (Empty);
 }
 
 message Info {
     int32 id = 1;
-    int32 lamport = 2;
+    uint64 lamport = 2;
+}
+
+message Id {
+    int32 id = 1;
 }
 
 message Empty {
