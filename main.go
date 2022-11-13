@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -17,7 +18,7 @@ import (
 
 const CLIENTS = 3
 const OFFSET int32 = 7000
-const VERBOSE = false
+const VERBOSE = true
 
 const (
 	RELEASED uint8 = 0
@@ -77,14 +78,18 @@ func main() {
 	// Create listener tcp on port ownPort
 	list, err := net.Listen("tcp", fmt.Sprintf(":%v", ownPort))
 	if err != nil {
-		log.Fatalf("Failed to listen on port: %v", err)
+		log.Fatalf("Could not listen on port: %v", err)
 	}
+
+	f := setLog(ownPort)
+	defer f.Close()
+
 	grpcServer := grpc.NewServer()
 	ricart.RegisterRicartAndAgrawalaServer(grpcServer, p)
 
 	go func() {
 		if err := grpcServer.Serve(list); err != nil {
-			log.Fatalf("failed to server %v", err)
+			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
 
@@ -101,7 +106,7 @@ func main() {
 		}
 		conn, err := grpc.Dial(fmt.Sprintf(":%v", port), grpc.WithInsecure(), grpc.WithBlock())
 		if err != nil {
-			log.Fatalf("Could not connect: %s", err)
+			log.Fatalf("Dial failed: %s", err)
 		}
 		defer conn.Close()
 		c := ricart.NewRicartAndAgrawalaClient(conn)
@@ -110,6 +115,9 @@ func main() {
 	if VERBOSE {
 		log.Printf("Connected to all clients :)\nSleeping a little to allow them to dial to us aswell\n")
 	}
+	// as seen from log message above - this is because if we do not sleep, then the first (or second) client will cause
+	// invalid control flow in the different gRPC functions on last client, since it might not have an active connection to the one dialing it yet
+	// - the simplest solution, is to just wait a little, rather than inquiring each client about whether or not it has N-clients dialed, like ourselves
 	time.Sleep(5 * time.Second)
 
 	// start our queue loop, it will (when told to) - send messages that have been delayed
@@ -136,7 +144,9 @@ func main() {
 		}
 	}()
 
-	rand.Seed(time.Now().UnixNano() + int64(ownPort))
+	// not cryptographically secure, however, it does not need to be - we are only using it so that
+	// the programs dont request access at the same time :)
+	rand.Seed(time.Now().UnixNano() / int64(ownPort))
 	for {
 		// 1/100 chance
 		if rand.Intn(100) == 42 {
@@ -199,7 +209,6 @@ func (p *peer) LessThan(id int32, lamport uint64) bool {
 }
 
 func (p *peer) Reply(ctx context.Context, req *ricart.Id) (*ricart.Empty, error) {
-	// maybe instead of empty, let it be message containing ID
 	if VERBOSE {
 		log.Printf("Reply | Got reply from id %v\n", req.Id)
 	}
@@ -231,4 +240,22 @@ func (p *peer) enter() {
 			log.Printf("Enter | Requested from %v\n", id)
 		}
 	}
+}
+
+func setLog(port int32) *os.File {
+	// Clears the log.txt file when a new server is started
+	filename := fmt.Sprintf("peer(%v)-log.txt", port)
+	if err := os.Truncate(filename, 0); err != nil {
+		log.Printf("Failed to truncate: %v\n", err)
+	}
+
+	// This connects to the log file/changes the output of the log informaiton to the log.txt file.
+	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("Error opening file: %v", err)
+	}
+	// print to both file and console
+	mw := io.MultiWriter(os.Stdout, f)
+	log.SetOutput(mw)
+	return f
 }
