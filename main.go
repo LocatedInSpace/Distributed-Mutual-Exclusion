@@ -16,8 +16,16 @@ import (
 	"google.golang.org/grpc"
 )
 
+// amount of peers we are going to start, amount set here is what will need to be
+// opened, otherwise the program will wait forever for last peers
 const CLIENTS = 3
+
+// port offset, if program is ran with option 0, then port used is offset+0
 const OFFSET int32 = 7000
+
+// if verbose is false, then programs will only print: requesting CS, joining CS, leaving CS
+// CS = critical section.
+// verbose set to false helps verifying that multiple peers are not in critical section at the same time
 const VERBOSE = true
 
 const (
@@ -113,7 +121,7 @@ func main() {
 		p.clients[port] = c
 	}
 	if VERBOSE {
-		log.Printf("Connected to all clients :)\nSleeping a little to allow them to dial to us aswell\n")
+		log.Printf("Connected to all clients :) Sleeping to allow them to dial to us aswell\n")
 	}
 	// as seen from log message above - this is because if we do not sleep, then the first (or second) client will cause
 	// invalid control flow in the different gRPC functions on last client, since it might not have an active connection to the one dialing it yet
@@ -175,13 +183,16 @@ func (p *peer) Request(ctx context.Context, req *ricart.Info) (*ricart.Empty, er
 		}
 		p.queue = append(p.queue, msg{id: req.Id, lamport: req.Lamport})
 	} else {
+		if req.Lamport > p.lamport {
+			p.lamport = req.Lamport
+		}
+		p.lamport++
 		// we need the reply to arrive later than request finishing up, which is messy
+		// reply/request could instead have been combined, and then depending on value - the peer
+		// would know whether or not a request succeeded... however, this simplifies logic, since it allows
+		// to *only* count amount of replies we've received to know whether or not we can enter critical section
 		go func() {
-			if req.Lamport > p.lamport {
-				p.lamport = req.Lamport
-			}
-			p.lamport++
-			time.Sleep(1 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 			if VERBOSE {
 				log.Printf("Request | Allowing %v to enter critical section\n", req.Id)
 			}
@@ -193,9 +204,6 @@ func (p *peer) Request(ctx context.Context, req *ricart.Info) (*ricart.Empty, er
 }
 
 func (p *peer) LessThan(id int32, lamport uint64) bool {
-	if VERBOSE {
-		log.Printf("||LessThan||\n|p.lamport: %v, lamport: %v\n|p.id: %v, id: %v\n--------\n", p.lamport, lamport, p.id, id)
-	}
 	if p.lamport < lamport {
 		return true
 	} else if p.lamport > lamport {
